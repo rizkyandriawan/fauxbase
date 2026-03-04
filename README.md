@@ -444,19 +444,20 @@ Seed data and runtime data are tracked separately.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> FirstLoad: App starts (empty store)
-    FirstLoad --> HasData: Seeds applied<br/>seed:product:0, seed:product:1, ...
+    [*] --> FirstLoad : App starts
+    FirstLoad --> HasData : Seeds applied
 
-    HasData --> HasData: App reloads (seeds unchanged)<br/>Seeds SKIPPED, all data preserved
+    HasData --> HasData : Reloads (seeds unchanged)
+    note right of HasData : Seeds SKIPPED, data preserved
 
-    HasData --> SeedChanged: App reloads (seeds modified)
-    SeedChanged --> HasData: Seed records re-applied (upsert)<br/>Runtime records untouched
+    HasData --> SeedChanged : Reloads (seeds modified)
+    SeedChanged --> HasData : Upsert seed records
 
-    HasData --> ResetSeeds: DevTools "Reset Seeds"
-    ResetSeeds --> HasData: Wipe all → re-apply seeds
+    HasData --> ResetSeeds : Reset Seeds
+    ResetSeeds --> HasData : Wipe + re-seed
 
-    HasData --> RefreshSeeds: DevTools "Refresh Seeds"
-    RefreshSeeds --> HasData: Re-apply seeds only<br/>Runtime records preserved
+    HasData --> RefreshSeeds : Refresh Seeds
+    RefreshSeeds --> HasData : Re-seed only
 ```
 
 **How it works:**
