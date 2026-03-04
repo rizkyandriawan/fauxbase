@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+
+# Planning & design docs (not shipped)
+PLAN.md
+PITCH.md
