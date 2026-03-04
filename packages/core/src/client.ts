@@ -16,7 +16,7 @@ type ClientServices<S extends Record<string, new (...args: any[]) => Service<any
 type ClientResult<
   S extends Record<string, new (...args: any[]) => Service<any>>,
   A extends (new (...args: any[]) => AuthService<any>) | undefined,
-> = ClientServices<S> & (A extends new (...args: any[]) => AuthService<any> ? { auth: InstanceType<A> } : {});
+> = ClientServices<S> & (A extends new (...args: any[]) => AuthService<any> ? { auth: InstanceType<A> } : {}) & { readonly ready: Promise<void> };
 
 // --- Factory ---
 
@@ -128,9 +128,31 @@ export function createClient<
   }
 
   // Apply seeds (only for local driver)
-  if (config.seeds && defaultDriver instanceof LocalDriver) {
-    applySeedsIfNeeded(defaultDriver, config.seeds);
+  let readyPromise: Promise<void>;
+  if (defaultDriver instanceof LocalDriver) {
+    if (defaultDriver.isReady) {
+      // Synchronous backend (memory, localStorage) — apply seeds now
+      if (config.seeds) {
+        applySeedsIfNeeded(defaultDriver, config.seeds);
+      }
+      readyPromise = Promise.resolve();
+    } else {
+      // Async backend (IndexedDB) — defer seeds until ready
+      readyPromise = defaultDriver.ready.then(() => {
+        if (config.seeds) {
+          applySeedsIfNeeded(defaultDriver, config.seeds);
+        }
+      });
+    }
+  } else {
+    readyPromise = Promise.resolve();
   }
+  Object.defineProperty(client, 'ready', {
+    value: readyPromise,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
 
   return client as ClientResult<S, A>;
 }

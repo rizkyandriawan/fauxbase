@@ -129,6 +129,135 @@ class LocalStorageBackend implements StorageBackend {
   }
 }
 
+// --- IndexedDB storage (memory-cached, write-through) ---
+
+function idbRequest<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+const IDB_DATA_STORE = 'data';
+const IDB_META_STORE = 'meta';
+
+class IndexedDBBackend implements StorageBackend {
+  private cache = new MemoryStorage();
+  private db: IDBDatabase | null = null;
+  private _ready: Promise<void>;
+
+  constructor(dbName: string) {
+    this._ready = this.open(dbName);
+  }
+
+  get ready(): Promise<void> {
+    return this._ready;
+  }
+
+  private open(dbName: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(dbName, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_DATA_STORE)) {
+          db.createObjectStore(IDB_DATA_STORE);
+        }
+        if (!db.objectStoreNames.contains(IDB_META_STORE)) {
+          db.createObjectStore(IDB_META_STORE);
+        }
+      };
+      req.onsuccess = async () => {
+        this.db = req.result;
+        await this.loadAll();
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  private async loadAll(): Promise<void> {
+    const db = this.db!;
+    const tx = db.transaction([IDB_DATA_STORE, IDB_META_STORE], 'readonly');
+    const dataStore = tx.objectStore(IDB_DATA_STORE);
+    const metaStore = tx.objectStore(IDB_META_STORE);
+
+    // Load all data keys
+    const dataKeys = await idbRequest(dataStore.getAllKeys());
+    const dataValues = await idbRequest(dataStore.getAll());
+    for (let i = 0; i < dataKeys.length; i++) {
+      const compositeKey = dataKeys[i] as string;
+      const sepIdx = compositeKey.indexOf(':');
+      const resource = compositeKey.substring(0, sepIdx);
+      const id = compositeKey.substring(sepIdx + 1);
+      this.cache.set(resource, id, dataValues[i]);
+    }
+
+    // Load all meta keys
+    const metaKeys = await idbRequest(metaStore.getAllKeys());
+    const metaValues = await idbRequest(metaStore.getAll());
+    for (let i = 0; i < metaKeys.length; i++) {
+      this.cache.setMeta(metaKeys[i] as string, metaValues[i]);
+    }
+  }
+
+  private writeData(resource: string, id: string, data: Record<string, any>): void {
+    if (!this.db) return;
+    const tx = this.db.transaction(IDB_DATA_STORE, 'readwrite');
+    tx.objectStore(IDB_DATA_STORE).put(data, `${resource}:${id}`);
+  }
+
+  private deleteData(resource: string, id: string): void {
+    if (!this.db) return;
+    const tx = this.db.transaction(IDB_DATA_STORE, 'readwrite');
+    tx.objectStore(IDB_DATA_STORE).delete(`${resource}:${id}`);
+  }
+
+  private writeMeta(key: string, value: string): void {
+    if (!this.db) return;
+    const tx = this.db.transaction(IDB_META_STORE, 'readwrite');
+    tx.objectStore(IDB_META_STORE).put(value, key);
+  }
+
+  getAll(resource: string): Record<string, any>[] {
+    return this.cache.getAll(resource);
+  }
+
+  getById(resource: string, id: string): Record<string, any> | undefined {
+    return this.cache.getById(resource, id);
+  }
+
+  set(resource: string, id: string, data: Record<string, any>): void {
+    this.cache.set(resource, id, data);
+    this.writeData(resource, id, data);
+  }
+
+  remove(resource: string, id: string): void {
+    this.cache.remove(resource, id);
+    this.deleteData(resource, id);
+  }
+
+  clear(resource: string): void {
+    const items = this.cache.getAll(resource);
+    this.cache.clear(resource);
+    if (this.db) {
+      const tx = this.db.transaction(IDB_DATA_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_DATA_STORE);
+      for (const item of items) {
+        store.delete(`${resource}:${item.id}`);
+      }
+    }
+  }
+
+  getMeta(key: string): string | null {
+    return this.cache.getMeta(key);
+  }
+
+  setMeta(key: string, value: string): void {
+    this.cache.setMeta(key, value);
+    this.writeMeta(key, value);
+  }
+}
+
 // --- Auth provider type ---
 
 type AuthProvider = () => { userId: string; userName?: string } | null;
@@ -139,11 +268,30 @@ export class LocalDriver implements Driver {
   private storage: StorageBackend;
   private entityClasses = new Map<string, Function>();
   private authProvider: AuthProvider | null = null;
+  private _ready: Promise<void>;
+  private _isReady: boolean;
 
   constructor(config: LocalDriverConfig) {
-    this.storage = config.persist === 'localStorage'
-      ? new LocalStorageBackend()
-      : new MemoryStorage();
+    if (config.persist === 'indexeddb') {
+      const backend = new IndexedDBBackend(config.dbName ?? 'fauxbase');
+      this.storage = backend;
+      this._isReady = false;
+      this._ready = backend.ready.then(() => { this._isReady = true; });
+    } else {
+      this.storage = config.persist === 'localStorage'
+        ? new LocalStorageBackend()
+        : new MemoryStorage();
+      this._isReady = true;
+      this._ready = Promise.resolve();
+    }
+  }
+
+  get ready(): Promise<void> {
+    return this._ready;
+  }
+
+  get isReady(): boolean {
+    return this._isReady;
   }
 
   setAuthProvider(provider: AuthProvider): void {

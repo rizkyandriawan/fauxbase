@@ -72,7 +72,8 @@ export interface FieldOptions {
 
 export interface LocalDriverConfig {
   type: 'local';
-  persist?: 'memory' | 'localStorage';
+  persist?: 'memory' | 'localStorage' | 'indexeddb';
+  dbName?: string;
 }
 
 export interface HttpDriverConfig {

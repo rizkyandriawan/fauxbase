@@ -7,7 +7,15 @@ Fauxbase is a frontend data layer that simulates your backend during development
 ```
 npm install fauxbase          # core
 npm install fauxbase-react    # react hooks (optional)
+npm install fauxbase-vue      # vue composables (optional)
+npm install fauxbase-svelte   # svelte stores (optional)
 npm install fauxbase-devtools # devtools panel (optional)
+```
+
+Or scaffold a new project instantly:
+
+```
+npx fauxbase-cli init
 ```
 
 ---
@@ -61,7 +69,7 @@ That's it.
   Fauxbase                        Fauxbase
      ↓                               ↓
   Local Driver                    HTTP Driver
-  (memory / localStorage)            ↓
+  (memory/localStorage/IndexedDB)    ↓
                                   Your Backend API
 ```
 
@@ -113,8 +121,11 @@ During development, it runs locally. When your backend is ready, it forwards the
 - Auth simulation (`AuthService`, login/register/logout, role checks)
 - Auto-injection of `createdById`/`updatedById` when authenticated
 - React hooks (`useList`, `useGet`, `useMutation`, `useAuth`)
+- Vue 3 composables (same API as React hooks)
+- Svelte stores (same API, uses `writable`/`readable`)
+- CLI scaffolder (`npx fauxbase-cli init`)
 - Seed data with deterministic IDs
-- Local driver (memory / localStorage)
+- Local driver (memory / localStorage / IndexedDB)
 - HTTP driver for real backends (with retry, timeout, error mapping)
 - Hybrid mode for gradual migration
 - Backend presets (Spring Boot, NestJS, Laravel, Django, Express)
@@ -528,6 +539,153 @@ The request logger uses `Proxy` to wrap service methods — zero changes to the 
 
 ---
 
+## IndexedDB Storage
+
+For persistent local data that survives page refreshes without needing `localStorage` size limits:
+
+```ts
+const fb = createClient({
+  driver: { type: 'local', persist: 'indexeddb' },
+  services: { product: ProductService },
+});
+await fb.ready; // Wait for IndexedDB to load
+```
+
+Options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `persist` | `'memory'` | `'memory'`, `'localStorage'`, or `'indexeddb'` |
+| `dbName` | `'fauxbase'` | Custom IndexedDB database name |
+
+The IndexedDB backend uses a memory-cached, write-through strategy: all data is loaded into memory on init (behind `fb.ready`), then writes are synchronously reflected in memory and asynchronously persisted to IndexedDB. This means reads are always fast and the synchronous `StorageBackend` interface is preserved.
+
+For memory and localStorage drivers, `fb.ready` resolves immediately.
+
+---
+
+## Vue Composables
+
+`fauxbase-vue` provides Vue 3 Composition API equivalents of the React hooks.
+
+```
+npm install fauxbase-vue
+```
+
+### Setup
+
+```ts
+// main.ts
+import { FauxbasePlugin } from 'fauxbase-vue';
+import { fb } from './fauxbase';
+
+const app = createApp(App);
+app.use(FauxbasePlugin, { client: fb });
+```
+
+### Usage
+
+```vue
+<script setup>
+import { useList, useMutation, useAuth } from 'fauxbase-vue';
+
+const { items, loading, error, meta, refetch } = useList(fb.product, {
+  filter: { isActive: true },
+  sort: { field: 'price', direction: 'desc' },
+});
+
+const { create, update, remove } = useMutation(fb.product);
+
+// items, loading, error, meta are Vue Ref<> values
+</script>
+```
+
+All hooks: `useList`, `useGet`, `useMutation`, `useAuth`, `useFauxbase`.
+
+Returns are `Ref<>` values — use `.value` in script, automatic unwrapping in templates. Mutations auto-invalidate `useList` subscribers.
+
+---
+
+## Svelte Stores
+
+`fauxbase-svelte` provides Svelte store-based equivalents. Compatible with Svelte 4 and 5.
+
+```
+npm install fauxbase-svelte
+```
+
+### Setup
+
+```svelte
+<!-- +layout.svelte -->
+<script>
+  import { setFauxbaseContext } from 'fauxbase-svelte';
+  import { fb } from './fauxbase';
+
+  setFauxbaseContext(fb);
+</script>
+
+<slot />
+```
+
+### Usage
+
+```svelte
+<script>
+  import { useList, useMutation } from 'fauxbase-svelte';
+
+  const { items, loading, error } = useList(fb.product, {
+    filter: { isActive: true },
+  });
+
+  const { create } = useMutation(fb.product);
+</script>
+
+{#if $loading}
+  <p>Loading...</p>
+{:else}
+  {#each $items as product}
+    <div>{product.name}</div>
+  {/each}
+{/if}
+```
+
+All hooks: `useList`, `useGet`, `useMutation`, `useAuth`, `useFauxbase`.
+
+Returns are Svelte `Readable<>` stores — use `$store` syntax in templates. Mutations auto-invalidate `useList` subscribers.
+
+---
+
+## CLI
+
+`fauxbase-cli` scaffolds a new Fauxbase project with entities, services, seeds, and framework-specific setup.
+
+```
+npx fauxbase-cli init
+```
+
+### Interactive prompts
+
+1. **Framework?** — React / Vue / Svelte / None
+2. **Output directory?** — default `src/fauxbase/`
+3. **Sample entity (Todo)?** — Y/N
+4. **Authentication?** — Y/N
+5. **Storage?** — memory / localStorage / IndexedDB
+
+### Generated structure
+
+```
+src/fauxbase/
+  entities/todo.ts, user.ts
+  services/todo.ts, user.ts
+  seeds/todo.ts, user.ts
+  index.ts              # createClient call
+```
+
+After scaffolding, the CLI prints the `npm install` command and framework-specific setup instructions.
+
+---
+
 ## Seeding
 
 Seed data has deterministic IDs. Runtime data has UUIDs. They never collide.
@@ -579,7 +737,7 @@ Week 6     "All APIs ready"
 - [x] **v0.1** — Core: Entity, Service, QueryEngine, LocalDriver, Seeds
 - [x] **v0.2** — React hooks (`useList`, `useGet`, `useMutation`, `useAuth`) + Auth simulation
 - [x] **v0.3** — HTTP Driver + Backend Presets + Hybrid Mode + DevTools
-- [ ] **v0.4** — IndexedDB, CLI (`npx fauxbase init`), Vue/Svelte adapters
+- [x] **v0.4** — IndexedDB + CLI (`npx fauxbase-cli init`) + Vue/Svelte adapters
 
 ---
 
