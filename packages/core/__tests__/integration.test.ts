@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createClient, Entity, field, relation, computed, Service, beforeCreate, seed, ConflictError, NotFoundError } from '../src/index';
+import { createClient, Entity, field, relation, computed, Service, AuthService, beforeCreate, seed, ConflictError, NotFoundError } from '../src/index';
 
 // --- Define entities ---
 
@@ -190,5 +190,76 @@ describe('Integration: full e2e flow', () => {
 
     await fb.product.bulk.delete(bulkCreated.map((p: any) => p.id));
     expect(await fb.product.count()).toBe(3);
+  });
+});
+
+// --- Auth integration ---
+
+class User extends Entity {
+  @field({ required: true }) name!: string;
+  @field({ required: true }) email!: string;
+  @field({ required: true }) password!: string;
+  @field({ default: 'user' }) role!: string;
+}
+
+class UserAuth extends AuthService<User> {
+  entity = User;
+  endpoint = '/users';
+}
+
+describe('Integration: auth flow', () => {
+  function createAuthApp() {
+    return createClient({
+      driver: { type: 'local', persist: 'memory' },
+      services: { product: ProductService, category: CategoryService },
+      seeds: [categorySeed, productSeed],
+      auth: UserAuth,
+    });
+  }
+
+  it('login → create product → verify createdById auto-injected', async () => {
+    const fb = createAuthApp();
+
+    // Register a user
+    const user = await fb.auth.register({
+      name: 'Operator',
+      email: 'op@barbershop.com',
+      password: 'secret',
+    });
+
+    // Create a product while logged in
+    const { data: product } = await fb.product.create({
+      name: 'New Pomade',
+      price: 200000,
+      categoryId: 'seed:category:0',
+    });
+
+    expect((product as any).createdById).toBe((user as any).id);
+    expect((product as any).createdByName).toBe('Operator');
+
+    // Update product → updatedById injected
+    const { data: updated } = await fb.product.update((product as any).id, { price: 210000 });
+    expect((updated as any).updatedById).toBe((user as any).id);
+
+    // Logout → create without auth fields
+    fb.auth.logout();
+    const { data: anon } = await fb.product.create({
+      name: 'Anon Product',
+      price: 50000,
+      categoryId: 'seed:category:1',
+    });
+    expect((anon as any).createdById).toBeUndefined();
+  });
+
+  it('services can access client.auth for role checks', async () => {
+    const fb = createAuthApp();
+    await fb.auth.register({
+      name: 'Admin',
+      email: 'admin@test.com',
+      password: 'pass',
+      role: 'admin',
+    } as any);
+
+    expect((fb.product as any).client.auth.hasRole('admin')).toBe(true);
   });
 });

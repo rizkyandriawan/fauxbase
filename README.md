@@ -5,7 +5,9 @@
 Fauxbase is a frontend data layer that simulates your backend during development, then connects to your real API without changing your components.
 
 ```
-npm install fauxbase
+npm install fauxbase          # core
+npm install fauxbase-react    # react hooks (optional)
+npm install fauxbase-devtools # devtools panel (optional)
 ```
 
 ---
@@ -108,22 +110,48 @@ During development, it runs locally. When your backend is ready, it forwards the
 - Entity system with decorators (`@field`, `@relation`, `@computed`)
 - Service layer with lifecycle hooks (`@beforeCreate`, `@afterUpdate`, ...)
 - 13 query operators (`eq`, `gte`, `contains`, `between`, `in`, ...)
+- Auth simulation (`AuthService`, login/register/logout, role checks)
+- Auto-injection of `createdById`/`updatedById` when authenticated
+- React hooks (`useList`, `useGet`, `useMutation`, `useAuth`)
 - Seed data with deterministic IDs
 - Local driver (memory / localStorage)
-- HTTP driver for real backends
+- HTTP driver for real backends (with retry, timeout, error mapping)
 - Hybrid mode for gradual migration
-- Backend presets (Spring Boot, NestJS, Laravel, Django, Rails, ...)
+- Backend presets (Spring Boot, NestJS, Laravel, Django, Express)
+- DevTools panel for inspecting data, auth, and requests
 - Zero runtime dependencies (~8KB gzipped)
+
+---
+
+## Switching to Real Backend
+
+When your API is ready, change one line:
+
+```ts
+// Before: local driver (default)
+const fb = createClient({
+  services: { product: ProductService },
+});
+
+// After: HTTP driver
+const fb = createClient({
+  driver: { type: 'http', baseUrl: '/api', preset: 'spring-boot' },
+  services: { product: ProductService },
+});
+```
+
+Every component stays the same. Every query operator maps to your backend's filter syntax.
 
 ---
 
 ## Hybrid Mode
 
-This is the killer feature. Migrate one service at a time:
+Migrate one service at a time:
 
 ```ts
 const fb = createClient({
   driver: { type: 'local' },
+  services: { product: ProductService, order: OrderService, cart: CartService },
 
   overrides: {
     product: { driver: { type: 'http', baseUrl: '/api', preset: 'spring-boot' } },
@@ -131,7 +159,87 @@ const fb = createClient({
 });
 ```
 
-Products use the real API. Everything else stays local. Migrate at your own pace.
+Products use the real API. Orders and cart stay local. Migrate at your own pace.
+
+---
+
+## Backend Presets
+
+Presets tell the HTTP driver how to serialize queries and parse responses for your backend framework.
+
+| Preset | Framework | Filter Style | Page Indexing |
+|--------|-----------|-------------|---------------|
+| `default` | Generic REST | `?price__gte=100` | 1-indexed |
+| `spring-boot` | Spring Boot | `?price.gte=100` | 0-indexed |
+| `nestjs` | NestJS | `?filter.price.$gte=100` | 1-indexed |
+| `laravel` | Laravel | `?filter[price_gte]=100` | 1-indexed |
+| `django` | Django REST | `?price__gte=100` | 1-indexed |
+| `express` | Express.js | `?price__gte=100` | 1-indexed |
+
+### Custom Presets
+
+```ts
+import { definePreset } from 'fauxbase';
+
+const myPreset = definePreset({
+  name: 'my-backend',
+  response: {
+    single: (raw) => ({ data: raw.result }),
+    list: (raw) => ({ items: raw.results, meta: raw.pagination }),
+    error: (raw) => ({ error: raw.message, code: raw.code }),
+  },
+  meta: { page: 'page', size: 'limit', totalItems: 'total', totalPages: 'pages' },
+  query: {
+    filterStyle: 'django',
+    pageParam: 'page',
+    sizeParam: 'limit',
+    sortParam: 'order_by',
+    sortFormat: 'field,direction',
+  },
+  auth: {
+    loginUrl: '/auth/login',
+    registerUrl: '/auth/register',
+    tokenField: 'access_token',
+    userField: 'user',
+    headerFormat: 'Bearer {token}',
+  },
+});
+
+const fb = createClient({
+  driver: { type: 'http', baseUrl: '/api', preset: myPreset },
+  services: { product: ProductService },
+});
+```
+
+---
+
+## HTTP Driver Options
+
+```ts
+const fb = createClient({
+  driver: {
+    type: 'http',
+    baseUrl: 'https://api.example.com',
+    preset: 'spring-boot',
+    timeout: 10000,                        // 10s (default: 30s)
+    retry: { maxRetries: 3, baseDelay: 300 }, // exponential backoff for 5xx
+    headers: { 'X-API-Key': 'my-key' },    // custom headers on every request
+  },
+  services: { product: ProductService },
+});
+```
+
+Error mapping:
+
+| HTTP Status | Fauxbase Error |
+|-------------|---------------|
+| 400, 422 | `ValidationError` |
+| 401, 403 | `ForbiddenError` |
+| 404 | `NotFoundError` |
+| 409 | `ConflictError` |
+| 5xx | `HttpError` (with retry) |
+| Network failure | `NetworkError` |
+| Timeout | `TimeoutError` |
 
 ---
 
@@ -224,6 +332,202 @@ Every service gets: `list`, `get`, `create`, `update`, `delete`, `count`, `bulk.
 
 ---
 
+## Auth
+
+Simulate login, registration, and role-based access during development. When your real auth backend is ready, the same API works over HTTP.
+
+```ts
+class User extends Entity {
+  @field({ required: true }) name!: string;
+  @field({ required: true }) email!: string;
+  @field({ required: true }) password!: string;
+  @field({ default: 'user' }) role!: string;
+}
+
+class UserAuth extends AuthService<User> {
+  entity = User;
+  endpoint = '/users';
+}
+
+const fb = createClient({
+  services: { product: ProductService },
+  auth: UserAuth,
+});
+
+// Register & login
+await fb.auth.register({ name: 'Alice', email: 'alice@test.com', password: 'secret' });
+await fb.auth.login({ email: 'alice@test.com', password: 'secret' });
+
+// Check state
+fb.auth.isLoggedIn;   // true
+fb.auth.currentUser;  // { id, email }
+fb.auth.hasRole('admin'); // false
+fb.auth.token;        // mock JWT (base64)
+
+// Auto-injection — createdById/updatedById set automatically
+const { data } = await fb.product.create({ name: 'Pomade', price: 150000 });
+data.createdById; // → user's ID
+data.createdByName; // → 'Alice'
+
+fb.auth.logout();
+```
+
+With HTTP driver, `login()` and `register()` POST to the preset's auth endpoints. The token from the server response is injected into all subsequent requests as `Authorization: Bearer <token>`.
+
+---
+
+## React Hooks
+
+`fauxbase-react` provides hooks that connect your React components to Fauxbase services.
+
+```
+npm install fauxbase-react
+```
+
+### Setup
+
+```tsx
+import { FauxbaseProvider } from 'fauxbase-react';
+
+function App() {
+  return (
+    <FauxbaseProvider client={fb}>
+      <ProductList />
+    </FauxbaseProvider>
+  );
+}
+```
+
+### useList — fetch collections
+
+```tsx
+import { useList } from 'fauxbase-react';
+
+function ProductList() {
+  const { items, loading, error, meta, refetch } = useList(fb.product, {
+    filter: { isActive: true },
+    sort: { field: 'price', direction: 'desc' },
+    page: 1,
+    size: 20,
+  });
+
+  if (loading) return <p>Loading...</p>;
+  return items.map(p => <div key={p.id}>{p.name}</div>);
+}
+```
+
+Options: `enabled` (skip fetch), `refetchInterval` (polling in ms).
+
+### useGet — fetch single record
+
+```tsx
+import { useGet } from 'fauxbase-react';
+
+function ProductDetail({ id }: { id: string }) {
+  const { data, loading, error } = useGet(fb.product, id);
+  if (loading) return <p>Loading...</p>;
+  return <h1>{data?.name}</h1>;
+}
+```
+
+Pass `null` as id to skip fetching.
+
+### useMutation — create, update, delete
+
+```tsx
+import { useMutation } from 'fauxbase-react';
+
+function CreateProduct() {
+  const { create, loading, error } = useMutation(fb.product);
+
+  const handleSubmit = async () => {
+    await create({ name: 'New Product', price: 100000 });
+    // useList hooks on the same service auto-refetch
+  };
+}
+```
+
+Returns `{ create, update, remove, loading, error }`. Mutations automatically invalidate all `useList` subscribers on the same service.
+
+### useAuth — auth state in React
+
+```tsx
+import { useAuth } from 'fauxbase-react';
+
+function LoginPage() {
+  const { user, isLoggedIn, login, logout, register, hasRole, loading } = useAuth();
+
+  const handleLogin = async () => {
+    await login({ email: 'alice@test.com', password: 'secret' });
+  };
+
+  if (isLoggedIn) return <p>Welcome, {user.email}</p>;
+  return <button onClick={handleLogin}>Login</button>;
+}
+```
+
+### useFauxbase — raw client access
+
+```tsx
+import { useFauxbase } from 'fauxbase-react';
+
+function Dashboard() {
+  const fb = useFauxbase();
+  // fb.product, fb.auth, etc.
+}
+```
+
+---
+
+## DevTools
+
+`fauxbase-devtools` provides a floating panel for inspecting your Fauxbase instance during development.
+
+```
+npm install fauxbase-devtools
+```
+
+```tsx
+import { FauxbaseDevtools } from 'fauxbase-devtools';
+
+function App() {
+  return (
+    <FauxbaseProvider client={fb}>
+      <ProductList />
+      {process.env.NODE_ENV === 'development' && (
+        <FauxbaseDevtools client={fb} />
+      )}
+    </FauxbaseProvider>
+  );
+}
+```
+
+### Panels
+
+| Panel | What it shows |
+|-------|--------------|
+| **Data** | Browse records per service |
+| **Auth** | Current auth state + logout button |
+| **Requests** | Chronological log of all service method calls with timing |
+| **Seeds** | Reset seed data per resource (LocalDriver only) |
+
+### Configuration
+
+```tsx
+<FauxbaseDevtools
+  client={fb}
+  config={{
+    position: 'bottom-left',     // default: 'bottom-right'
+    defaultOpen: true,           // default: false
+    maxLogEntries: 200,          // default: 100
+  }}
+/>
+```
+
+The request logger uses `Proxy` to wrap service methods — zero changes to the Service class, zero overhead when devtools is not rendered.
+
+---
+
 ## Seeding
 
 Seed data has deterministic IDs. Runtime data has UUIDs. They never collide.
@@ -239,26 +543,6 @@ const productSeed = seed(Product, [
 - Fauxbase tracks a version hash — if seeds change, only seed records are re-applied
 - Runtime records are never touched during re-seeding
 - On HTTP driver, seeding is disabled — the backend owns the data
-
----
-
-## Backend Presets
-
-Works with any REST backend. Presets tell the HTTP driver how to serialize queries and parse responses.
-
-| Preset | Framework | Filter Style |
-|--------|-----------|-------------|
-| `lightwind` | Lightwind (Quarkus) | `?price__gte=100` |
-| `spring-boot` | Spring Boot | `?price.gte=100` |
-| `nestjs` | NestJS | `?filter.price.$gte=100` |
-| `laravel` | Laravel | `?filter[price_gte]=100` |
-| `django` | Django REST Framework | `?price__gte=100` |
-| `express` | Express.js | `?price__gte=100` |
-| `fastapi` | FastAPI | `?price__gte=100` |
-| `rails` | Ruby on Rails | `?q[price_gteq]=100` |
-| `go-gin` | Go (Gin) | `?price__gte=100` |
-
-Custom presets supported via `definePreset()`.
 
 ---
 
@@ -293,8 +577,8 @@ Week 6     "All APIs ready"
 ## Roadmap
 
 - [x] **v0.1** — Core: Entity, Service, QueryEngine, LocalDriver, Seeds
-- [ ] **v0.2** — React hooks (`useList`, `useGet`, `useMutation`) + Auth simulation
-- [ ] **v0.3** — HTTP Driver + Backend Presets + DevTools
+- [x] **v0.2** — React hooks (`useList`, `useGet`, `useMutation`, `useAuth`) + Auth simulation
+- [x] **v0.3** — HTTP Driver + Backend Presets + Hybrid Mode + DevTools
 - [ ] **v0.4** — IndexedDB, CLI (`npx fauxbase init`), Vue/Svelte adapters
 
 ---

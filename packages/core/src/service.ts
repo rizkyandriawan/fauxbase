@@ -37,11 +37,17 @@ export abstract class Service<T extends Entity> {
 
   protected driver!: Driver;
   protected resourceName!: string;
+  protected client: any;
 
   /** @internal — called by createClient to wire the service */
   _init(driver: Driver, resourceName: string): void {
     this.driver = driver;
     this.resourceName = resourceName;
+  }
+
+  /** @internal — called by createClient to give services access to the client */
+  _setClient(client: any): void {
+    this.client = client;
   }
 
   async list(query: QueryParams = {}): Promise<PagedResponse<T>> {

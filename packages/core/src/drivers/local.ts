@@ -129,16 +129,29 @@ class LocalStorageBackend implements StorageBackend {
   }
 }
 
+// --- Auth provider type ---
+
+type AuthProvider = () => { userId: string; userName?: string } | null;
+
 // --- LocalDriver ---
 
 export class LocalDriver implements Driver {
   private storage: StorageBackend;
   private entityClasses = new Map<string, Function>();
+  private authProvider: AuthProvider | null = null;
 
   constructor(config: LocalDriverConfig) {
     this.storage = config.persist === 'localStorage'
       ? new LocalStorageBackend()
       : new MemoryStorage();
+  }
+
+  setAuthProvider(provider: AuthProvider): void {
+    this.authProvider = provider;
+  }
+
+  getStorageBackend(): StorageBackend {
+    return this.storage;
   }
 
   registerEntity(resource: string, entityClass: Function): void {
@@ -168,6 +181,8 @@ export class LocalDriver implements Driver {
     const entityClass = this.entityClasses.get(resource);
     const now = new Date().toISOString();
 
+    const authContext = this.authProvider?.();
+
     let record: Record<string, any> = {
       ...data,
       id: (data as any).id || generateUUID(),
@@ -175,6 +190,12 @@ export class LocalDriver implements Driver {
       updatedAt: now,
       deletedAt: null,
       version: 1,
+      ...(authContext ? {
+        createdById: authContext.userId,
+        createdByName: authContext.userName,
+        updatedById: authContext.userId,
+        updatedByName: authContext.userName,
+      } : {}),
     };
 
     if (entityClass) {
@@ -201,6 +222,8 @@ export class LocalDriver implements Driver {
       validateEntity(data as Record<string, any>, entityClass, false);
     }
 
+    const authContext = this.authProvider?.();
+
     const record: Record<string, any> = {
       ...existing,
       ...data,
@@ -208,6 +231,10 @@ export class LocalDriver implements Driver {
       createdAt: existing.createdAt,
       updatedAt: new Date().toISOString(),
       version: (existing.version || 0) + 1,
+      ...(authContext ? {
+        updatedById: authContext.userId,
+        updatedByName: authContext.userName,
+      } : {}),
     };
 
     this.storage.set(resource, id, record);
@@ -225,11 +252,19 @@ export class LocalDriver implements Driver {
     }
 
     const now = new Date().toISOString();
+    const authContext = this.authProvider?.();
+
     const record = {
       ...existing,
       deletedAt: now,
       updatedAt: now,
       version: (existing.version || 0) + 1,
+      ...(authContext ? {
+        deletedById: authContext.userId,
+        deletedByName: authContext.userName,
+        updatedById: authContext.userId,
+        updatedByName: authContext.userName,
+      } : {}),
     };
 
     this.storage.set(resource, id, record);

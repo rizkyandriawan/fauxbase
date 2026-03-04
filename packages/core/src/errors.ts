@@ -43,3 +43,31 @@ export class ForbiddenError extends FauxbaseError {
     this.name = 'ForbiddenError';
   }
 }
+
+export class NetworkError extends FauxbaseError {
+  constructor(message = 'Network request failed') {
+    super(message, 'NETWORK');
+    this.name = 'NetworkError';
+  }
+}
+
+export class TimeoutError extends FauxbaseError {
+  constructor(message = 'Request timed out') {
+    super(message, 'TIMEOUT');
+    this.name = 'TimeoutError';
+  }
+}
+
+export class HttpError extends FauxbaseError {
+  public readonly status: number;
+
+  constructor(message: string, status: number, details?: Record<string, string>) {
+    super(message, 'HTTP', details);
+    this.name = 'HttpError';
+    this.status = status;
+  }
+
+  toJSON() {
+    return { ...super.toJSON(), status: this.status };
+  }
+}

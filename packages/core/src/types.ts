@@ -79,6 +79,9 @@ export interface HttpDriverConfig {
   type: 'http';
   baseUrl: string;
   preset?: string;
+  timeout?: number;
+  retry?: { maxRetries?: number; baseDelay?: number };
+  headers?: Record<string, string>;
 }
 
 export type DriverConfig = LocalDriverConfig | HttpDriverConfig;
