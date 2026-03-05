@@ -1,5 +1,5 @@
 import { createContext, createElement, useContext } from 'react';
-import type { Service } from 'fauxbase';
+import type { Service, EventBus } from 'fauxbase';
 import type { FauxbaseContextValue } from './types';
 
 // --- Context ---
@@ -35,6 +35,18 @@ export function FauxbaseProvider(props: {
       };
     },
   };
+
+  // Bridge remote events → auto-invalidation
+  const eventBus: EventBus | undefined = props.client._eventBus;
+  if (eventBus) {
+    eventBus.onAny((event) => {
+      if (event.source !== 'remote') return;
+      const svc = props.client[event.resource];
+      if (svc) {
+        value.invalidate(svc);
+      }
+    });
+  }
 
   return createElement(FauxbaseContext.Provider, { value }, props.children);
 }

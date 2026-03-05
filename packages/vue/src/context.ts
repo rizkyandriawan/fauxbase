@@ -1,6 +1,6 @@
 import { inject, provide } from 'vue';
 import type { App, InjectionKey } from 'vue';
-import type { Service } from 'fauxbase';
+import type { Service, EventBus } from 'fauxbase';
 import type { FauxbaseContextValue } from './types';
 
 const FAUXBASE_KEY: InjectionKey<FauxbaseContextValue> = Symbol('fauxbase');
@@ -32,6 +32,18 @@ export const FauxbasePlugin = {
       },
     };
 
+    // Bridge remote events → auto-invalidation
+    const eventBus: EventBus | undefined = options.client._eventBus;
+    if (eventBus) {
+      eventBus.onAny((event) => {
+        if (event.source !== 'remote') return;
+        const svc = options.client[event.resource];
+        if (svc) {
+          value.invalidate(svc);
+        }
+      });
+    }
+
     app.provide(FAUXBASE_KEY, value);
   },
 };
@@ -61,6 +73,18 @@ export function provideFauxbase(client: any): void {
       };
     },
   };
+
+  // Bridge remote events → auto-invalidation
+  const eventBus: EventBus | undefined = client._eventBus;
+  if (eventBus) {
+    eventBus.onAny((event) => {
+      if (event.source !== 'remote') return;
+      const svc = client[event.resource];
+      if (svc) {
+        value.invalidate(svc);
+      }
+    });
+  }
 
   provide(FAUXBASE_KEY, value);
 }

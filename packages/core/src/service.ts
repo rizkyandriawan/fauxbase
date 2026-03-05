@@ -1,6 +1,7 @@
 import type { ApiResponse, HookType, PagedResponse, QueryParams } from './types';
 import type { Driver } from './drivers/types';
 import type { Entity } from './entity';
+import type { EventBus } from './events/event-bus';
 import { registerHook, getHooks } from './registry';
 
 // --- Hook decorators ---
@@ -39,6 +40,9 @@ export abstract class Service<T extends Entity> {
   protected resourceName!: string;
   protected client: any;
 
+  /** @internal */
+  _eventBus?: EventBus;
+
   /** @internal — called by createClient to wire the service */
   _init(driver: Driver, resourceName: string): void {
     this.driver = driver;
@@ -63,6 +67,7 @@ export abstract class Service<T extends Entity> {
     await this.runHooks('beforeCreate', data, allItems);
     const result = await this.driver.create<T>(this.resourceName, data);
     await this.runHooks('afterCreate', result.data);
+    this.emitEvent('created', { data: result.data, id: (result.data as any).id });
     return result;
   }
 
@@ -70,11 +75,14 @@ export abstract class Service<T extends Entity> {
     await this.runHooks('beforeUpdate', id, data);
     const result = await this.driver.update<T>(this.resourceName, id, data);
     await this.runHooks('afterUpdate', result.data);
+    this.emitEvent('updated', { data: result.data, id });
     return result;
   }
 
   async delete(id: string): Promise<ApiResponse<T>> {
-    return this.driver.delete<T>(this.resourceName, id);
+    const result = await this.driver.delete<T>(this.resourceName, id);
+    this.emitEvent('deleted', { data: result.data, id });
+    return result;
   }
 
   async count(filter?: Record<string, any>): Promise<number> {
@@ -82,14 +90,37 @@ export abstract class Service<T extends Entity> {
   }
 
   get bulk() {
+    const self = this;
     return {
-      create: (items: Array<Partial<T>>) =>
-        this.driver.bulkCreate<T>(this.resourceName, items),
-      update: (updates: Array<{ id: string; data: Partial<T> }>) =>
-        this.driver.bulkUpdate<T>(this.resourceName, updates),
-      delete: (ids: string[]) =>
-        this.driver.bulkDelete(this.resourceName, ids),
+      async create(items: Array<Partial<T>>) {
+        const result = await self.driver.bulkCreate<T>(self.resourceName, items);
+        self.emitEvent('bulkCreated', { data: result.data });
+        return result;
+      },
+      async update(updates: Array<{ id: string; data: Partial<T> }>) {
+        const result = await self.driver.bulkUpdate<T>(self.resourceName, updates);
+        self.emitEvent('bulkUpdated', { data: result.data, ids: updates.map(u => u.id) });
+        return result;
+      },
+      async delete(ids: string[]) {
+        const result = await self.driver.bulkDelete(self.resourceName, ids);
+        self.emitEvent('bulkDeleted', { ids });
+        return result;
+      },
     };
+  }
+
+  private emitEvent(action: import('./events/types').EventAction, extra: { data?: any; id?: string; ids?: string[] }): void {
+    if (!this._eventBus) return;
+    this._eventBus.emit({
+      action,
+      resource: this.resourceName,
+      data: extra.data,
+      id: extra.id,
+      ids: extra.ids,
+      timestamp: Date.now(),
+      source: 'local',
+    });
   }
 
   private async runHooks(hookType: HookType, ...args: any[]): Promise<void> {

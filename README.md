@@ -120,9 +120,10 @@ During development, it runs locally. When your backend is ready, it forwards the
 - 13 query operators (`eq`, `gte`, `contains`, `between`, `in`, ...)
 - Auth simulation (`AuthService`, login/register/logout, role checks)
 - Auto-injection of `createdById`/`updatedById` when authenticated
-- React hooks (`useList`, `useGet`, `useMutation`, `useAuth`)
+- React hooks (`useList`, `useGet`, `useMutation`, `useAuth`, `useEvent`)
 - Vue 3 composables (same API as React hooks)
 - Svelte stores (same API, uses `writable`/`readable`)
+- Real-time events (EventBus, SSE, STOMP/WebSocket)
 - CLI scaffolder (`npx fauxbase-cli init`)
 - Seed data with deterministic IDs
 - Local driver (memory / localStorage / IndexedDB)
@@ -656,6 +657,117 @@ Returns are Svelte `Readable<>` stores — use `$store` syntax in templates. Mut
 
 ---
 
+## Real-Time Events
+
+Fauxbase includes an opt-in event system. Local mutations auto-emit events. For server-pushed events, connect via SSE or STOMP (WebSocket).
+
+### Enable local events
+
+```ts
+const fb = createClient({
+  services: { todo: TodoService },
+  events: true,
+});
+
+// Listen to events
+fb._eventBus.on('todo', (event) => {
+  console.log(event.action, event.data); // 'created', { id, ... }
+});
+
+// Or listen to all events
+fb._eventBus.onAny((event) => {
+  console.log(event.resource, event.action);
+});
+```
+
+### SSE (Server-Sent Events)
+
+```ts
+const fb = createClient({
+  driver: { type: 'http', baseUrl: '/api' },
+  services: { todo: TodoService },
+  events: {
+    source: {
+      type: 'sse',
+      url: '/api/events',
+      eventMap: { 'todo-changed': 'todo' },
+    },
+  },
+});
+```
+
+### STOMP (WebSocket)
+
+Requires `@stomp/stompjs` as a peer dependency.
+
+```ts
+const fb = createClient({
+  driver: { type: 'http', baseUrl: '/api' },
+  services: { todo: TodoService },
+  events: {
+    source: {
+      type: 'stomp',
+      brokerUrl: 'wss://api.example.com/ws',
+      subscriptions: { '/topic/todos': 'todo' },
+    },
+  },
+});
+```
+
+### Custom handlers
+
+```ts
+const fb = createClient({
+  services: { todo: TodoService },
+  events: {
+    handlers: {
+      todo: (event) => console.log('Todo changed:', event),
+    },
+  },
+});
+```
+
+### useEvent hook (React / Vue / Svelte)
+
+```tsx
+import { useEvent } from 'fauxbase-react'; // or fauxbase-vue, fauxbase-svelte
+
+function TodoList() {
+  useEvent('todo', (event) => {
+    toast(`Todo ${event.action}!`);
+  });
+
+  // Also accepts a service instance
+  useEvent(fb.todo, (event) => { ... });
+}
+```
+
+### Auto-invalidation
+
+Remote events (from SSE/STOMP) automatically trigger refetches in `useList`/`useGet` hooks. No manual wiring needed.
+
+### Event type
+
+```ts
+interface FauxbaseEvent<T = any> {
+  action: 'created' | 'updated' | 'deleted' | 'bulkCreated' | 'bulkUpdated' | 'bulkDeleted';
+  resource: string;
+  data?: T;
+  id?: string;
+  ids?: string[];
+  timestamp: number;
+  source: 'local' | 'remote';
+}
+```
+
+### Cleanup
+
+```ts
+fb.disconnect(); // Closes SSE/STOMP connection and clears all listeners
+```
+
+---
+
 ## CLI
 
 `fauxbase-cli` scaffolds a new Fauxbase project with entities, services, seeds, and framework-specific setup.
@@ -738,6 +850,7 @@ Week 6     "All APIs ready"
 - [x] **v0.2** — React hooks (`useList`, `useGet`, `useMutation`, `useAuth`) + Auth simulation
 - [x] **v0.3** — HTTP Driver + Backend Presets + Hybrid Mode + DevTools
 - [x] **v0.4** — IndexedDB + CLI (`npx fauxbase-cli init`) + Vue/Svelte adapters
+- [x] **v0.5** — Real-Time Events (EventBus, SSE, STOMP) + `useEvent` hook + auto-invalidation
 
 ---
 

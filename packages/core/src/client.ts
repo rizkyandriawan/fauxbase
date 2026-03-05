@@ -1,10 +1,14 @@
 import type { DriverConfig, HttpDriverConfig, SeedDefinition } from './types';
 import type { Driver } from './drivers/types';
 import type { AuthState } from './auth';
+import type { EventsConfig, EventSourceAdapter } from './events/types';
 import { LocalDriver } from './drivers/local';
 import { HttpDriver } from './drivers/http';
 import { Service } from './service';
 import { AuthService } from './auth';
+import { EventBus } from './events/event-bus';
+import { SSESource } from './events/sse-source';
+import { STOMPSource } from './events/stomp-source';
 import { computeSeedVersion } from './seed';
 
 // --- Type inference ---
@@ -16,7 +20,10 @@ type ClientServices<S extends Record<string, new (...args: any[]) => Service<any
 type ClientResult<
   S extends Record<string, new (...args: any[]) => Service<any>>,
   A extends (new (...args: any[]) => AuthService<any>) | undefined,
-> = ClientServices<S> & (A extends new (...args: any[]) => AuthService<any> ? { auth: InstanceType<A> } : {}) & { readonly ready: Promise<void> };
+> = ClientServices<S>
+  & (A extends new (...args: any[]) => AuthService<any> ? { auth: InstanceType<A> } : {})
+  & { readonly ready: Promise<void> }
+  & { _eventBus?: EventBus; disconnect?: () => void };
 
 // --- Factory ---
 
@@ -30,6 +37,7 @@ export function createClient<
     seeds?: SeedDefinition[];
     auth?: A;
     overrides?: Record<string, { driver: DriverConfig }>;
+    events?: EventsConfig;
   },
 ): ClientResult<S, A> {
   const driverConfig = config.driver ?? { type: 'local' as const };
@@ -125,6 +133,43 @@ export function createClient<
     if (svc && typeof svc._setClient === 'function') {
       svc._setClient(client);
     }
+  }
+
+  // Wire EventBus if events are configured
+  let eventSource: EventSourceAdapter | null = null;
+  if (config.events) {
+    const eventBus = new EventBus();
+    client._eventBus = eventBus;
+
+    // Attach EventBus to all services
+    for (const [name, ServiceClass] of Object.entries(config.services)) {
+      const svc = client[name] as Service<any>;
+      svc._eventBus = eventBus;
+    }
+
+    const eventsConfig = config.events === true ? {} : config.events;
+
+    // Register custom handlers
+    if (eventsConfig.handlers) {
+      for (const [resource, handler] of Object.entries(eventsConfig.handlers)) {
+        eventBus.on(resource, handler);
+      }
+    }
+
+    // Connect event source (SSE or STOMP)
+    if (eventsConfig.source) {
+      if (eventsConfig.source.type === 'sse') {
+        eventSource = new SSESource(eventsConfig.source, eventBus);
+      } else if (eventsConfig.source.type === 'stomp') {
+        eventSource = new STOMPSource(eventsConfig.source, eventBus);
+      }
+      eventSource?.connect();
+    }
+
+    client.disconnect = () => {
+      eventSource?.disconnect();
+      eventBus.destroy();
+    };
   }
 
   // Apply seeds (only for local driver)

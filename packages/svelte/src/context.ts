@@ -1,5 +1,5 @@
 import { setContext, getContext } from 'svelte';
-import type { Service } from 'fauxbase';
+import type { Service, EventBus } from 'fauxbase';
 import type { FauxbaseContextValue } from './types';
 
 const FAUXBASE_KEY = 'fauxbase';
@@ -27,6 +27,18 @@ export function setFauxbaseContext(client: any): FauxbaseContextValue {
       };
     },
   };
+
+  // Bridge remote events → auto-invalidation
+  const eventBus: EventBus | undefined = client._eventBus;
+  if (eventBus) {
+    eventBus.onAny((event) => {
+      if (event.source !== 'remote') return;
+      const svc = client[event.resource];
+      if (svc) {
+        value.invalidate(svc);
+      }
+    });
+  }
 
   setContext(FAUXBASE_KEY, value);
   return value;
