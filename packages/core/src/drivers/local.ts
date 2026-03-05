@@ -2,7 +2,7 @@ import type { ApiResponse, LocalDriverConfig, PagedResponse, QueryParams } from 
 import type { Driver } from './types';
 import { executeQuery, applyFilters } from '../query-engine';
 import { applyComputedFields, applyDefaults, validateEntity } from '../entity';
-import { NotFoundError } from '../errors';
+import { NotFoundError, NetworkError, TimeoutError } from '../errors';
 
 // --- UUID generation ---
 
@@ -270,8 +270,13 @@ export class LocalDriver implements Driver {
   private authProvider: AuthProvider | null = null;
   private _ready: Promise<void>;
   private _isReady: boolean;
+  private latencyMs: number | { min: number; max: number };
+  private errorRate: number;
 
   constructor(config: LocalDriverConfig) {
+    this.latencyMs = config.latency ?? 0;
+    this.errorRate = config.errorRate ?? 0;
+
     if (config.persist === 'indexeddb') {
       const backend = new IndexedDBBackend(config.dbName ?? 'fauxbase');
       this.storage = backend;
@@ -284,6 +289,32 @@ export class LocalDriver implements Driver {
       this._isReady = true;
       this._ready = Promise.resolve();
     }
+  }
+
+  private async simulate(): Promise<void> {
+    // Simulate random errors
+    if (this.errorRate > 0 && Math.random() < this.errorRate) {
+      const errors = [
+        () => new NetworkError('Simulated network failure'),
+        () => new TimeoutError('Simulated request timeout'),
+        () => new NetworkError('Simulated connection refused'),
+      ];
+      const delay = this.getLatency();
+      if (delay > 0) await new Promise(r => setTimeout(r, delay / 2));
+      throw errors[Math.floor(Math.random() * errors.length)]();
+    }
+
+    // Simulate latency
+    const delay = this.getLatency();
+    if (delay > 0) {
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+
+  private getLatency(): number {
+    if (typeof this.latencyMs === 'number') return this.latencyMs;
+    const { min, max } = this.latencyMs;
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
   get ready(): Promise<void> {
@@ -307,6 +338,7 @@ export class LocalDriver implements Driver {
   }
 
   async list<T>(resource: string, query: QueryParams): Promise<PagedResponse<T>> {
+    await this.simulate();
     const items = this.storage.getAll(resource);
     const entityClass = this.entityClasses.get(resource);
     const processed = entityClass
@@ -316,6 +348,7 @@ export class LocalDriver implements Driver {
   }
 
   async get<T>(resource: string, id: string): Promise<ApiResponse<T>> {
+    await this.simulate();
     const item = this.storage.getById(resource, id);
     if (!item || item.deletedAt) {
       throw new NotFoundError(`${resource} with id "${id}" not found`);
@@ -326,6 +359,7 @@ export class LocalDriver implements Driver {
   }
 
   async create<T>(resource: string, data: Partial<T>): Promise<ApiResponse<T>> {
+    await this.simulate();
     const entityClass = this.entityClasses.get(resource);
     const now = new Date().toISOString();
 
@@ -360,6 +394,7 @@ export class LocalDriver implements Driver {
   }
 
   async update<T>(resource: string, id: string, data: Partial<T>): Promise<ApiResponse<T>> {
+    await this.simulate();
     const existing = this.storage.getById(resource, id);
     if (!existing || existing.deletedAt) {
       throw new NotFoundError(`${resource} with id "${id}" not found`);
@@ -394,6 +429,7 @@ export class LocalDriver implements Driver {
   }
 
   async delete<T>(resource: string, id: string): Promise<ApiResponse<T>> {
+    await this.simulate();
     const existing = this.storage.getById(resource, id);
     if (!existing || existing.deletedAt) {
       throw new NotFoundError(`${resource} with id "${id}" not found`);
@@ -420,6 +456,7 @@ export class LocalDriver implements Driver {
   }
 
   async count(resource: string, filter?: Record<string, any>): Promise<number> {
+    await this.simulate();
     let items = this.storage.getAll(resource).filter(item => !item.deletedAt);
     if (filter) {
       items = applyFilters(items, filter);

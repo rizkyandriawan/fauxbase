@@ -74,6 +74,8 @@ export interface LocalDriverConfig {
   type: 'local';
   persist?: 'memory' | 'localStorage' | 'indexeddb';
   dbName?: string;
+  latency?: number | { min: number; max: number };
+  errorRate?: number;
 }
 
 export interface HttpDriverConfig {
