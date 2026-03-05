@@ -30,6 +30,7 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
   private authState: AuthState | null = null;
   private saveState: ((state: AuthState | null) => void) | null = null;
   private httpDriver: HttpDriver | null = null;
+  private authChangeListeners: Array<() => void> = [];
 
   /** @internal — called by createClient to wire persistence */
   _initAuth(
@@ -219,9 +220,17 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     }));
   }
 
+  /** @internal — called by createClient to listen for auth state changes */
+  _onAuthChange(listener: () => void): void {
+    this.authChangeListeners.push(listener);
+  }
+
   private persistState(): void {
     if (this.saveState) {
       this.saveState(this.authState);
+    }
+    for (const listener of this.authChangeListeners) {
+      listener();
     }
   }
 }

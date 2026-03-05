@@ -24,6 +24,11 @@ export class SSESource implements EventSourceAdapter {
     }
   }
 
+  reconnect(): void {
+    this.disconnect();
+    this.connect();
+  }
+
   disconnect(): void {
     if (this.eventSource) {
       this.eventSource.close();

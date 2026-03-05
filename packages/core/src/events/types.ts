@@ -15,6 +15,7 @@ export type EventHandler<T = any> = (event: FauxbaseEvent<T>) => void;
 export interface EventSourceAdapter {
   connect(): void;
   disconnect(): void;
+  reconnect(): void;
 }
 
 export interface SSEConfig {
@@ -29,6 +30,8 @@ export interface STOMPConfig {
   brokerUrl: string;
   subscriptions: Record<string, string>;
   connectHeaders?: Record<string, string>;
+  /** @internal — injected by createClient when auth is configured */
+  getAuthToken?: () => string | null;
 }
 
 export type EventSourceConfig = SSEConfig | STOMPConfig;

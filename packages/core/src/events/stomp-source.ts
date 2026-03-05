@@ -13,10 +13,14 @@ export class STOMPSource implements EventSourceAdapter {
     this.connectAsync();
   }
 
+  reconnect(): void {
+    this.disconnect();
+    this.connect();
+  }
+
   private async connectAsync(): Promise<void> {
     let StompJs: any;
     try {
-      // Dynamic import — @stomp/stompjs is a peer dependency
       const moduleName = '@stomp/stompjs';
       StompJs = await (Function('m', 'return import(m)')(moduleName));
     } catch {
@@ -25,9 +29,19 @@ export class STOMPSource implements EventSourceAdapter {
       );
     }
 
+    const headers = { ...this.config.connectHeaders };
+
+    // Auto-inject auth token if available
+    if (this.config.getAuthToken) {
+      const token = this.config.getAuthToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
     this.client = new StompJs.Client({
       brokerURL: this.config.brokerUrl,
-      connectHeaders: this.config.connectHeaders,
+      connectHeaders: headers,
       onConnect: () => {
         for (const [destination, resource] of Object.entries(this.config.subscriptions)) {
           this.client.subscribe(destination, (message: any) => {

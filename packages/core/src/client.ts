@@ -161,9 +161,21 @@ export function createClient<
       if (eventsConfig.source.type === 'sse') {
         eventSource = new SSESource(eventsConfig.source, eventBus);
       } else if (eventsConfig.source.type === 'stomp') {
-        eventSource = new STOMPSource(eventsConfig.source, eventBus);
+        // Auto-inject auth token getter if auth is configured
+        const stompConfig = { ...eventsConfig.source };
+        if (config.auth && !stompConfig.getAuthToken) {
+          stompConfig.getAuthToken = () => (client.auth as AuthService<any>)?.token ?? null;
+        }
+        eventSource = new STOMPSource(stompConfig, eventBus);
       }
       eventSource?.connect();
+    }
+
+    // Reconnect event source on auth state change (login/logout)
+    if (eventSource && config.auth) {
+      (client.auth as AuthService<any>)._onAuthChange(() => {
+        eventSource!.reconnect();
+      });
     }
 
     client.disconnect = () => {
