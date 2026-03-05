@@ -112,8 +112,15 @@ export abstract class Service<T extends Entity> {
 
   async request<R = any>(
     path: string,
-    options?: { method?: string; body?: any; query?: Record<string, string> },
+    options?: { method?: string; body?: any; query?: Record<string, string>; local?: () => R | Promise<R> },
   ): Promise<R> {
+    if (options?.local) {
+      try {
+        return this.driver.request<R>(this.resourceName, path, options);
+      } catch {
+        return options.local();
+      }
+    }
     return this.driver.request<R>(this.resourceName, path, options);
   }
 

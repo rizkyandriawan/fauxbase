@@ -374,7 +374,33 @@ const receipt = await fb.payment.request('/charge', {
 
 The URL is built from the service's registered endpoint + the path you provide. Auth headers are injected automatically.
 
-> **Note:** `service.request()` only works with the HTTP driver. On local driver it throws an error — custom endpoints require a real backend.
+### Local mode — `local` handler
+
+On local driver there's no backend to call. Provide a `local` callback as a fallback:
+
+```ts
+class PaymentService extends Service<Payment> {
+  entity = Payment;
+  endpoint = '/payments';
+
+  async charge(amount: number) {
+    return this.request<{ transactionId: string }>('/charge', {
+      method: 'POST',
+      body: { amount },
+      local: () => ({
+        transactionId: `fake-${Date.now()}`,
+      }),
+    });
+  }
+}
+
+// Works on both drivers:
+const result = await fb.payment.charge(50000);
+// Local  → runs the `local` callback
+// HTTP   → POST /payments/charge { amount: 50000 }
+```
+
+If no `local` handler is provided and you're on the local driver, it throws a descriptive error.
 
 ---
 

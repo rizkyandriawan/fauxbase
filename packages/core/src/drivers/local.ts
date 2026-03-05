@@ -457,11 +457,14 @@ export class LocalDriver implements Driver {
   async request<R = any>(
     _resource: string,
     _path: string,
-    _options?: { method?: string; body?: any; query?: Record<string, string> },
+    options?: { method?: string; body?: any; query?: Record<string, string>; local?: () => R | Promise<R> },
   ): Promise<R> {
+    if (options?.local) {
+      return options.local();
+    }
     throw new Error(
       'service.request() is only available with the HTTP driver. ' +
-      'Local driver does not support custom endpoints.',
+      'Provide a `local` handler or switch to HTTP driver.',
     );
   }
 

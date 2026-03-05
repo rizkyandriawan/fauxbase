@@ -13,7 +13,7 @@ export interface Driver {
   bulkDelete(resource: string, ids: string[]): Promise<ApiResponse<{ count: number }>>;
 
   // Custom request
-  request<R = any>(resource: string, path: string, options?: { method?: string; body?: any; query?: Record<string, string> }): Promise<R>;
+  request<R = any>(resource: string, path: string, options?: { method?: string; body?: any; query?: Record<string, string>; local?: () => R | Promise<R> }): Promise<R>;
 
   // Seed management
   seed(resource: string, data: Array<Record<string, any>>, entityClass: Function): void;

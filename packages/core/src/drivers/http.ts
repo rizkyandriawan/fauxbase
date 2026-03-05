@@ -236,7 +236,7 @@ export class HttpDriver implements Driver {
   async request<R = any>(
     resource: string,
     path: string,
-    options?: { method?: string; body?: any; query?: Record<string, string> },
+    options?: { method?: string; body?: any; query?: Record<string, string>; local?: () => R | Promise<R> },
   ): Promise<R> {
     const endpoint = this.getEndpoint(resource);
     let url = `${this.baseUrl}${endpoint}${path}`;
