@@ -714,6 +714,32 @@ const fb = createClient({
 });
 ```
 
+### Authentication
+
+When `auth` is configured, STOMP automatically injects `Authorization: Bearer <token>` into connection headers. Both SSE and STOMP reconnect on login/logout so the connection always uses the current token.
+
+```ts
+const fb = createClient({
+  driver: { type: 'http', baseUrl: '/api' },
+  services: { todo: TodoService },
+  auth: UserAuth,
+  events: {
+    source: {
+      type: 'stomp',
+      brokerUrl: 'wss://api.example.com/ws',
+      subscriptions: { '/topic/todos': 'todo' },
+      // No need to set connectHeaders — token is injected automatically
+    },
+  },
+});
+
+// After login, STOMP reconnects with the new token
+await fb.auth.login({ email: 'alice@test.com', password: 'secret' });
+
+// After logout, STOMP reconnects without token
+fb.auth.logout();
+```
+
 ### Custom handlers
 
 ```ts
