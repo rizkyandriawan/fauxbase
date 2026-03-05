@@ -110,6 +110,13 @@ export abstract class Service<T extends Entity> {
     };
   }
 
+  async request<R = any>(
+    path: string,
+    options?: { method?: string; body?: any; query?: Record<string, string> },
+  ): Promise<R> {
+    return this.driver.request<R>(this.resourceName, path, options);
+  }
+
   private emitEvent(action: import('./events/types').EventAction, extra: { data?: any; id?: string; ids?: string[] }): void {
     if (!this._eventBus) return;
     this._eventBus.emit({

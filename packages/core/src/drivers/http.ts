@@ -75,7 +75,7 @@ export class HttpDriver implements Driver {
     return headers;
   }
 
-  private async request<T>(
+  private async _fetch<T>(
     url: string,
     options: RequestInit = {},
     retryCount = 0,
@@ -97,7 +97,7 @@ export class HttpDriver implements Driver {
         if (response.status >= 500 && retryCount < this.maxRetries) {
           const delay = this.baseDelay * Math.pow(2, retryCount);
           await new Promise(r => setTimeout(r, delay));
-          return this.request<T>(url, options, retryCount + 1);
+          return this._fetch<T>(url, options, retryCount + 1);
         }
 
         const body = await response.json().catch(() => ({}));
@@ -146,7 +146,7 @@ export class HttpDriver implements Driver {
     const queryString = params.toString();
     const fullUrl = queryString ? `${url}?${queryString}` : url;
 
-    const raw = await this.request<any>(fullUrl);
+    const raw = await this._fetch<any>(fullUrl);
     const parsed = this.preset.response.list(raw);
 
     return {
@@ -162,13 +162,13 @@ export class HttpDriver implements Driver {
 
   async get<T>(resource: string, id: string): Promise<ApiResponse<T>> {
     const url = this.buildUrl(resource, id);
-    const raw = await this.request<any>(url);
+    const raw = await this._fetch<any>(url);
     return this.preset.response.single(raw) as ApiResponse<T>;
   }
 
   async create<T>(resource: string, data: Partial<T>): Promise<ApiResponse<T>> {
     const url = this.buildUrl(resource);
-    const raw = await this.request<any>(url, {
+    const raw = await this._fetch<any>(url, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -177,7 +177,7 @@ export class HttpDriver implements Driver {
 
   async update<T>(resource: string, id: string, data: Partial<T>): Promise<ApiResponse<T>> {
     const url = this.buildUrl(resource, id);
-    const raw = await this.request<any>(url, {
+    const raw = await this._fetch<any>(url, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -186,7 +186,7 @@ export class HttpDriver implements Driver {
 
   async delete<T>(resource: string, id: string): Promise<ApiResponse<T>> {
     const url = this.buildUrl(resource, id);
-    const raw = await this.request<any>(url, {
+    const raw = await this._fetch<any>(url, {
       method: 'DELETE',
     });
     return this.preset.response.single(raw) as ApiResponse<T>;
@@ -200,13 +200,13 @@ export class HttpDriver implements Driver {
     const queryString = params.toString();
     const fullUrl = queryString ? `${url}?${queryString}` : url;
 
-    const raw = await this.request<any>(fullUrl);
+    const raw = await this._fetch<any>(fullUrl);
     return raw.count ?? raw.data?.count ?? 0;
   }
 
   async bulkCreate<T>(resource: string, data: Array<Partial<T>>): Promise<ApiResponse<T[]>> {
     const url = `${this.buildUrl(resource)}/bulk`;
-    const raw = await this.request<any>(url, {
+    const raw = await this._fetch<any>(url, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -216,7 +216,7 @@ export class HttpDriver implements Driver {
 
   async bulkUpdate<T>(resource: string, updates: Array<{ id: string; data: Partial<T> }>): Promise<ApiResponse<T[]>> {
     const url = `${this.buildUrl(resource)}/bulk`;
-    const raw = await this.request<any>(url, {
+    const raw = await this._fetch<any>(url, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
@@ -226,11 +226,28 @@ export class HttpDriver implements Driver {
 
   async bulkDelete(resource: string, ids: string[]): Promise<ApiResponse<{ count: number }>> {
     const url = `${this.buildUrl(resource)}/bulk`;
-    const raw = await this.request<any>(url, {
+    const raw = await this._fetch<any>(url, {
       method: 'DELETE',
       body: JSON.stringify({ ids }),
     });
     return { data: { count: raw.count ?? raw.data?.count ?? ids.length } };
+  }
+
+  async request<R = any>(
+    resource: string,
+    path: string,
+    options?: { method?: string; body?: any; query?: Record<string, string> },
+  ): Promise<R> {
+    const endpoint = this.getEndpoint(resource);
+    let url = `${this.baseUrl}${endpoint}${path}`;
+    if (options?.query) {
+      const params = new URLSearchParams(options.query);
+      url += `?${params.toString()}`;
+    }
+    return this._fetch<R>(url, {
+      method: options?.method ?? 'POST',
+      body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
   }
 
   // Seed methods are no-ops for HTTP — backend owns data

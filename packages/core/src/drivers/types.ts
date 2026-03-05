@@ -12,6 +12,9 @@ export interface Driver {
   bulkUpdate<T>(resource: string, updates: Array<{ id: string; data: Partial<T> }>): Promise<ApiResponse<T[]>>;
   bulkDelete(resource: string, ids: string[]): Promise<ApiResponse<{ count: number }>>;
 
+  // Custom request
+  request<R = any>(resource: string, path: string, options?: { method?: string; body?: any; query?: Record<string, string> }): Promise<R>;
+
   // Seed management
   seed(resource: string, data: Array<Record<string, any>>, entityClass: Function): void;
   getSeedVersion(): string | null;

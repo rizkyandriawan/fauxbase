@@ -128,6 +128,7 @@ During development, it runs locally. When your backend is ready, it forwards the
 - Vue 3 composables (same API as React hooks)
 - Svelte stores (same API, uses `writable`/`readable`)
 - Real-time events (EventBus, SSE, STOMP/WebSocket)
+- Custom endpoints (`service.request()` for non-CRUD calls)
 - CLI scaffolder (`npx fauxbase-cli init`)
 - Seed data with deterministic IDs
 - Local driver (memory / localStorage / IndexedDB)
@@ -344,7 +345,36 @@ class ProductService extends Service<Product> {
 }
 ```
 
-Every service gets: `list`, `get`, `create`, `update`, `delete`, `count`, `bulk.create`, `bulk.update`, `bulk.delete`.
+Every service gets: `list`, `get`, `create`, `update`, `delete`, `count`, `bulk.create`, `bulk.update`, `bulk.delete`, `request`.
+
+---
+
+## Custom Endpoints
+
+Need to call a non-CRUD endpoint like `POST /products/import` or `POST /payment/charge`? Use `service.request()`:
+
+```ts
+// POST to /products/import
+const result = await fb.product.request('/import', {
+  method: 'POST',
+  body: { csvUrl: 'https://example.com/products.csv' },
+});
+
+// GET with query params
+const stats = await fb.product.request('/stats', {
+  method: 'GET',
+  query: { period: '30d' },
+});
+
+// Default method is POST
+const receipt = await fb.payment.request('/charge', {
+  body: { amount: 50000, currency: 'IDR' },
+});
+```
+
+The URL is built from the service's registered endpoint + the path you provide. Auth headers are injected automatically.
+
+> **Note:** `service.request()` only works with the HTTP driver. On local driver it throws an error — custom endpoints require a real backend.
 
 ---
 
@@ -880,7 +910,7 @@ Week 6     "All APIs ready"
 - [x] **v0.2** — React hooks (`useList`, `useGet`, `useMutation`, `useAuth`) + Auth simulation
 - [x] **v0.3** — HTTP Driver + Backend Presets + Hybrid Mode + DevTools
 - [x] **v0.4** — IndexedDB + CLI (`npx fauxbase-cli init`) + Vue/Svelte adapters
-- [x] **v0.5** — Real-Time Events (EventBus, SSE, STOMP) + `useEvent` hook + auto-invalidation
+- [x] **v0.5** — Real-Time Events (EventBus, SSE, STOMP) + `useEvent` hook + auto-invalidation + Custom Endpoints (`service.request()`)
 
 ---
 

@@ -454,6 +454,17 @@ export class LocalDriver implements Driver {
     return { data: { count } };
   }
 
+  async request<R = any>(
+    _resource: string,
+    _path: string,
+    _options?: { method?: string; body?: any; query?: Record<string, string> },
+  ): Promise<R> {
+    throw new Error(
+      'service.request() is only available with the HTTP driver. ' +
+      'Local driver does not support custom endpoints.',
+    );
+  }
+
   // --- Seed management (synchronous) ---
 
   seed(resource: string, data: Array<Record<string, any>>, entityClass: Function): void {
