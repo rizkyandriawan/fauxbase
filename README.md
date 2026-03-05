@@ -1,6 +1,10 @@
-# Fauxbase
+<p align="center">
+  <img src="logo.png" alt="Fauxbase" width="200" />
+</p>
 
-**Start with fake. Ship with real. Change nothing.**
+<h1 align="center">Fauxbase</h1>
+
+<p align="center"><strong>Start with fake. Ship with real. Change nothing.</strong></p>
 
 Fauxbase is a frontend data layer that simulates your backend during development, then connects to your real API without changing your components.
 
