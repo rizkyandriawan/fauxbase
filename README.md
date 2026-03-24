@@ -185,7 +185,38 @@ const { data } = await fb.product.create({ name: 'Pomade', price: 150000 });
 data.createdByName; // → 'Alice'
 ```
 
-With HTTP driver, `login()` and `register()` POST to your real auth endpoints. The token is injected into all subsequent requests.
+Auth state persists to `localStorage` — survives page refresh. With HTTP driver, `login()` and `register()` POST to your real auth endpoints. The token is injected into all subsequent requests.
+
+#### Refresh Token
+
+```ts
+// Local driver: tokens auto-refresh before expiry (1h TTL)
+fb.auth.token;          // current access token
+fb.auth.refreshToken;   // refresh token
+fb.auth.expiresAt;      // expiry timestamp
+fb.auth.isExpired;      // true if token expired
+
+// Manual refresh
+await fb.auth.refresh();
+
+// HTTP driver: auto-refreshes on 401
+// Configure refresh URL in preset:
+const myPreset = definePreset({
+  auth: {
+    loginUrl: '/auth/login',
+    registerUrl: '/auth/register',
+    refreshUrl: '/auth/refresh',       // POST with { refreshToken }
+    tokenField: 'token',
+    refreshTokenField: 'refreshToken', // field in refresh response
+    expiresInField: 'expiresIn',       // seconds until expiry
+    userField: 'user',
+    headerFormat: 'Bearer {token}',
+  },
+  // ...
+});
+```
+
+On 401, the HTTP driver automatically calls the refresh endpoint, gets a new token, and retries the failed request. If refresh fails, it logs the user out.
 
 ### Latency & Error Simulation
 

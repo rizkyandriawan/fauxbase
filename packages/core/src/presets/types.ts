@@ -20,7 +20,10 @@ export interface Preset {
     loginUrl: string;
     registerUrl: string;
     logoutUrl?: string;
+    refreshUrl?: string;
     tokenField: string;
+    refreshTokenField?: string;
+    expiresInField?: string;
     userField: string;
     headerFormat: string; // 'Bearer {token}'
   };

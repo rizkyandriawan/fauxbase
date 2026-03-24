@@ -31,6 +31,7 @@ export class HttpDriver implements Driver {
   private defaultHeaders: Record<string, string>;
   private endpoints = new Map<string, string>();
   private authProvider: AuthProvider | null = null;
+  private onUnauthorized: (() => Promise<boolean>) | null = null;
 
   constructor(config: HttpDriverOptions) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
@@ -45,6 +46,11 @@ export class HttpDriver implements Driver {
 
   setAuthProvider(provider: AuthProvider): void {
     this.authProvider = provider;
+  }
+
+  /** @internal — set callback to refresh token on 401 */
+  setOnUnauthorized(handler: () => Promise<boolean>): void {
+    this.onUnauthorized = handler;
   }
 
   registerEndpoint(resource: string, endpoint: string): void {
@@ -93,6 +99,14 @@ export class HttpDriver implements Driver {
       clearTimeout(timer);
 
       if (!response.ok) {
+        // Auto-refresh on 401, then retry once
+        if (response.status === 401 && retryCount === 0 && this.onUnauthorized) {
+          const refreshed = await this.onUnauthorized();
+          if (refreshed) {
+            return this._fetch<T>(url, options, 1);
+          }
+        }
+
         // Retry 5xx errors
         if (response.status >= 500 && retryCount < this.maxRetries) {
           const delay = this.baseDelay * Math.pow(2, retryCount);

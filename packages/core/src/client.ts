@@ -100,11 +100,29 @@ export function createClient<
       authInstance._init(defaultDriver, resourceName);
       defaultDriver.registerEndpoint(resourceName, authInstance.endpoint);
 
-      // In-memory auth state for HTTP mode
+      // Persist auth state to localStorage (falls back to memory if unavailable)
+      const hasLocalStorage = typeof localStorage !== 'undefined';
+      const LS_AUTH_KEY = 'fauxbase:auth';
       let memoryAuthState: AuthState | null = null;
+
       authInstance._initAuth(
-        () => memoryAuthState,
-        (state: AuthState | null) => { memoryAuthState = state; },
+        () => {
+          if (hasLocalStorage) {
+            const raw = localStorage.getItem(LS_AUTH_KEY);
+            return raw ? JSON.parse(raw) as AuthState : null;
+          }
+          return memoryAuthState;
+        },
+        (state: AuthState | null) => {
+          if (hasLocalStorage) {
+            if (state) {
+              localStorage.setItem(LS_AUTH_KEY, JSON.stringify(state));
+            } else {
+              localStorage.removeItem(LS_AUTH_KEY);
+            }
+          }
+          memoryAuthState = state;
+        },
       );
       authInstance._setHttpMode(defaultDriver);
 
@@ -112,16 +130,34 @@ export function createClient<
         const token = authInstance.token;
         return token ? { token } : null;
       });
+
+      // Auto-refresh on 401: try to refresh token, return true if successful
+      defaultDriver.setOnUnauthorized(async () => {
+        try {
+          await authInstance.refresh();
+          return true;
+        } catch {
+          return false;
+        }
+      });
     }
 
     client.auth = authInstance;
 
-    // Also set auth provider on override HttpDrivers
+    // Also set auth provider + refresh handler on override HttpDrivers
     for (const driver of overrideDrivers.values()) {
       if (driver instanceof HttpDriver) {
         driver.setAuthProvider(() => {
           const token = (client.auth as AuthService<any>)?.token;
           return token ? { token } : null;
+        });
+        driver.setOnUnauthorized(async () => {
+          try {
+            await (client.auth as AuthService<any>).refresh();
+            return true;
+          } catch {
+            return false;
+          }
         });
       }
     }

@@ -17,12 +17,16 @@ export interface AuthState {
   userName?: string;
   role?: string;
   token: string;
+  refreshToken?: string;
+  expiresAt?: number;
 }
 
 export interface AuthContext {
   userId: string;
   userName?: string;
 }
+
+const LS_AUTH_KEY = 'fauxbase:auth';
 
 // --- AuthService ---
 
@@ -31,6 +35,8 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
   private saveState: ((state: AuthState | null) => void) | null = null;
   private httpDriver: HttpDriver | null = null;
   private authChangeListeners: Array<() => void> = [];
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private _isRefreshing: Promise<void> | null = null;
 
   /** @internal — called by createClient to wire persistence */
   _initAuth(
@@ -39,6 +45,11 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
   ): void {
     this.saveState = saveState;
     this.authState = loadState();
+
+    // Schedule refresh if we have a token with expiry
+    if (this.authState?.expiresAt) {
+      this.scheduleRefresh();
+    }
   }
 
   /** @internal — called by createClient when using HttpDriver */
@@ -61,12 +72,44 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
   }
 
   logout(): void {
+    this.clearRefreshTimer();
     this.authState = null;
     this.persistState();
   }
 
+  /** Manually refresh the token. Returns the new token. */
+  async refresh(): Promise<string> {
+    if (!this.authState?.refreshToken) {
+      throw new ForbiddenError('No refresh token available');
+    }
+
+    if (this.httpDriver) {
+      return this.httpRefresh();
+    }
+    return this.localRefresh();
+  }
+
+  /**
+   * Ensure the token is valid before making a request.
+   * If expired, auto-refreshes. Safe to call concurrently.
+   */
+  async ensureValidToken(): Promise<void> {
+    if (!this.authState) return;
+    if (!this.authState.expiresAt) return;
+
+    // Refresh if expires within 30 seconds
+    const buffer = 30 * 1000;
+    if (Date.now() + buffer >= this.authState.expiresAt) {
+      if (!this._isRefreshing) {
+        this._isRefreshing = this.refresh().then(() => {}).finally(() => {
+          this._isRefreshing = null;
+        });
+      }
+      await this._isRefreshing;
+    }
+  }
+
   get currentUser(): T | null {
-    // Return a shallow proxy — not the full entity, but enough for display
     return this.authState ? ({ id: this.authState.userId, email: this.authState.email } as unknown as T) : null;
   }
 
@@ -76,6 +119,19 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
 
   get token(): string | null {
     return this.authState?.token ?? null;
+  }
+
+  get refreshToken(): string | null {
+    return this.authState?.refreshToken ?? null;
+  }
+
+  get expiresAt(): number | null {
+    return this.authState?.expiresAt ?? null;
+  }
+
+  get isExpired(): boolean {
+    if (!this.authState?.expiresAt) return false;
+    return Date.now() >= this.authState.expiresAt;
   }
 
   hasRole(role: string): boolean {
@@ -90,7 +146,7 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     };
   }
 
-  // --- Local mode (original implementation) ---
+  // --- Local mode ---
 
   private async localLogin(credentials: LoginCredentials): Promise<T> {
     const { items } = await this.list({ filter: { email: credentials.email } });
@@ -103,14 +159,18 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
       throw new ForbiddenError('Invalid email or password');
     }
 
+    const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour
     this.authState = {
       userId: user.id,
       email: user.email,
       userName: user.name || user.email,
       role: user.role,
-      token: this.generateToken(user),
+      token: this.generateToken(user, expiresAt),
+      refreshToken: this.generateRefreshToken(user),
+      expiresAt,
     };
     this.persistState();
+    this.scheduleRefresh();
     return user;
   }
 
@@ -126,15 +186,35 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     const { data: user } = await this.create(data);
     const u = user as any;
 
+    const expiresAt = Date.now() + 60 * 60 * 1000;
     this.authState = {
       userId: u.id,
       email: u.email,
       userName: u.name || u.email,
       role: u.role,
-      token: this.generateToken(u),
+      token: this.generateToken(u, expiresAt),
+      refreshToken: this.generateRefreshToken(u),
+      expiresAt,
     };
     this.persistState();
+    this.scheduleRefresh();
     return user;
+  }
+
+  private async localRefresh(): Promise<string> {
+    // Decode refresh token to get user info
+    const payload = JSON.parse(atob(this.authState!.refreshToken!));
+    const expiresAt = Date.now() + 60 * 60 * 1000;
+
+    this.authState = {
+      ...this.authState!,
+      token: this.generateToken(payload, expiresAt),
+      refreshToken: this.generateRefreshToken(payload),
+      expiresAt,
+    };
+    this.persistState();
+    this.scheduleRefresh();
+    return this.authState!.token;
   }
 
   // --- HTTP mode ---
@@ -162,18 +242,8 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     }
 
     const body = await response.json();
-    const token = body[preset.auth.tokenField];
-    const user = body[preset.auth.userField] ?? body;
-
-    this.authState = {
-      userId: user.id,
-      email: user.email ?? credentials.email,
-      userName: user.name || user.email || credentials.email,
-      role: user.role,
-      token,
-    };
-    this.persistState();
-    return user as T;
+    this.setAuthFromResponse(body, preset, credentials.email);
+    return (body[preset.auth.userField] ?? body) as T;
   }
 
   private async httpRegister(data: Partial<T>): Promise<T> {
@@ -196,28 +266,117 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     }
 
     const body = await response.json();
+    this.setAuthFromResponse(body, preset, (data as any).email);
+    return (body[preset.auth.userField] ?? body) as T;
+  }
+
+  private async httpRefresh(): Promise<string> {
+    const preset = (this.httpDriver as any).preset as Preset;
+    const baseUrl = (this.httpDriver as any).baseUrl as string;
+    const refreshUrl = preset.auth.refreshUrl;
+
+    if (!refreshUrl) {
+      throw new ForbiddenError('Refresh URL not configured in preset');
+    }
+
+    const response = await fetch(`${baseUrl}${refreshUrl}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: this.authState!.refreshToken }),
+    });
+
+    if (!response.ok) {
+      // Refresh failed — force logout
+      this.logout();
+      throw new ForbiddenError('Session expired. Please log in again.');
+    }
+
+    const body = await response.json();
+    const token = body[preset.auth.tokenField];
+    const refreshToken = preset.auth.refreshTokenField
+      ? body[preset.auth.refreshTokenField]
+      : this.authState!.refreshToken;
+
+    const expiresIn = preset.auth.expiresInField ? body[preset.auth.expiresInField] : null;
+    const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : undefined;
+
+    this.authState = {
+      ...this.authState!,
+      token,
+      refreshToken,
+      expiresAt,
+    };
+    this.persistState();
+    this.scheduleRefresh();
+    return token;
+  }
+
+  private setAuthFromResponse(body: any, preset: Preset, fallbackEmail: string): void {
     const token = body[preset.auth.tokenField];
     const user = body[preset.auth.userField] ?? body;
+    const refreshToken = preset.auth.refreshTokenField
+      ? body[preset.auth.refreshTokenField]
+      : undefined;
+    const expiresIn = preset.auth.expiresInField ? body[preset.auth.expiresInField] : null;
+    const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : undefined;
 
     this.authState = {
       userId: user.id,
-      email: user.email ?? (data as any).email,
-      userName: user.name || user.email || (data as any).email,
+      email: user.email ?? fallbackEmail,
+      userName: user.name || user.email || fallbackEmail,
       role: user.role,
       token,
+      refreshToken,
+      expiresAt,
     };
     this.persistState();
-    return user as T;
+    this.scheduleRefresh();
   }
 
-  private generateToken(user: any): string {
+  // --- Token generation (local mode) ---
+
+  private generateToken(user: any, expiresAt: number): string {
     return btoa(JSON.stringify({
-      userId: user.id,
+      userId: user.id ?? user.userId,
       email: user.email,
       role: user.role,
       iat: Date.now(),
-      exp: Date.now() + 24 * 60 * 60 * 1000,
+      exp: expiresAt,
     }));
+  }
+
+  private generateRefreshToken(user: any): string {
+    return btoa(JSON.stringify({
+      userId: user.id ?? user.userId,
+      email: user.email,
+      role: user.role,
+      type: 'refresh',
+      iat: Date.now(),
+    }));
+  }
+
+  // --- Refresh scheduling ---
+
+  private scheduleRefresh(): void {
+    this.clearRefreshTimer();
+    if (!this.authState?.expiresAt) return;
+
+    // Refresh 60 seconds before expiry
+    const delay = this.authState.expiresAt - Date.now() - 60 * 1000;
+    if (delay <= 0) return;
+
+    this.refreshTimer = setTimeout(() => {
+      this.refresh().catch(() => {
+        // Silent fail — next request will trigger ensureValidToken
+      });
+    }, delay);
+  }
+
+  private clearRefreshTimer(): void {
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
   }
 
   /** @internal — called by createClient to listen for auth state changes */

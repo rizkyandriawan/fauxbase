@@ -34,7 +34,10 @@ export const springBootPreset = definePreset({
   auth: {
     loginUrl: '/api/auth/login',
     registerUrl: '/api/auth/register',
+    refreshUrl: '/api/auth/refresh',
     tokenField: 'token',
+    refreshTokenField: 'refreshToken',
+    expiresInField: 'expiresIn',
     userField: 'user',
     headerFormat: 'Bearer {token}',
   },
