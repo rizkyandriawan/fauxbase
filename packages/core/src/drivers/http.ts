@@ -258,10 +258,12 @@ export class HttpDriver implements Driver {
       const params = new URLSearchParams(options.query);
       url += `?${params.toString()}`;
     }
-    return this._fetch<R>(url, {
+    const raw = await this._fetch<any>(url, {
       method: options?.method ?? (options?.body !== undefined ? 'POST' : 'GET'),
       body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
+    const parsed = this.preset.response.single(raw);
+    return (parsed.data ?? raw) as R;
   }
 
   // Seed methods are no-ops for HTTP — backend owns data
