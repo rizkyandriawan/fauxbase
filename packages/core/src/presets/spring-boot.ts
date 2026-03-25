@@ -3,7 +3,7 @@ import { definePreset } from './types';
 export const springBootPreset = definePreset({
   name: 'spring-boot',
   response: {
-    single: (raw) => ({ data: raw }),
+    single: (raw) => ({ data: raw.data ?? raw }),
     list: (raw) => ({
       items: raw.content ?? [],
       meta: {

@@ -259,7 +259,7 @@ export class HttpDriver implements Driver {
       url += `?${params.toString()}`;
     }
     return this._fetch<R>(url, {
-      method: options?.method ?? 'POST',
+      method: options?.method ?? (options?.body !== undefined ? 'POST' : 'GET'),
       body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
   }

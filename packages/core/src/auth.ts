@@ -243,7 +243,8 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
 
     const body = await response.json();
     this.setAuthFromResponse(body, preset, credentials.email);
-    return (body[preset.auth.userField] ?? body) as T;
+    const unwrapped = this.unwrapBody(body);
+    return (unwrapped[preset.auth.userField] ?? unwrapped) as T;
   }
 
   private async httpRegister(data: Partial<T>): Promise<T> {
@@ -267,7 +268,8 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
 
     const body = await response.json();
     this.setAuthFromResponse(body, preset, (data as any).email);
-    return (body[preset.auth.userField] ?? body) as T;
+    const unwrapped = this.unwrapBody(body);
+    return (unwrapped[preset.auth.userField] ?? unwrapped) as T;
   }
 
   private async httpRefresh(): Promise<string> {
@@ -292,12 +294,13 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     }
 
     const body = await response.json();
-    const token = body[preset.auth.tokenField];
+    const unwrapped = this.unwrapBody(body);
+    const token = unwrapped[preset.auth.tokenField];
     const refreshToken = preset.auth.refreshTokenField
-      ? body[preset.auth.refreshTokenField]
+      ? unwrapped[preset.auth.refreshTokenField]
       : this.authState!.refreshToken;
 
-    const expiresIn = preset.auth.expiresInField ? body[preset.auth.expiresInField] : null;
+    const expiresIn = preset.auth.expiresInField ? unwrapped[preset.auth.expiresInField] : null;
     const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : undefined;
 
     this.authState = {
@@ -311,13 +314,22 @@ export abstract class AuthService<T extends Entity> extends Service<T> {
     return token;
   }
 
+  private unwrapBody(body: any): any {
+    // Support wrapped responses like { success: true, data: { token, user, ... } }
+    if (body.data && typeof body.data === 'object' && !Array.isArray(body.data)) {
+      return body.data;
+    }
+    return body;
+  }
+
   private setAuthFromResponse(body: any, preset: Preset, fallbackEmail: string): void {
-    const token = body[preset.auth.tokenField];
-    const user = body[preset.auth.userField] ?? body;
+    const unwrapped = this.unwrapBody(body);
+    const token = unwrapped[preset.auth.tokenField];
+    const user = unwrapped[preset.auth.userField] ?? unwrapped;
     const refreshToken = preset.auth.refreshTokenField
-      ? body[preset.auth.refreshTokenField]
+      ? unwrapped[preset.auth.refreshTokenField]
       : undefined;
-    const expiresIn = preset.auth.expiresInField ? body[preset.auth.expiresInField] : null;
+    const expiresIn = preset.auth.expiresInField ? unwrapped[preset.auth.expiresInField] : null;
     const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : undefined;
 
     this.authState = {

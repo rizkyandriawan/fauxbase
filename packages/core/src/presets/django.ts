@@ -3,7 +3,7 @@ import { definePreset } from './types';
 export const djangoPreset = definePreset({
   name: 'django',
   response: {
-    single: (raw) => ({ data: raw }),
+    single: (raw) => ({ data: raw.data ?? raw }),
     list: (raw) => ({
       items: raw.results ?? [],
       meta: {

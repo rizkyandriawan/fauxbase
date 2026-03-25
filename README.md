@@ -288,7 +288,7 @@ Remote events auto-invalidate `useList`/`useGet` hooks. No manual wiring.
 
 ### Custom Endpoints
 
-Call non-CRUD endpoints like `POST /products/import`:
+Call non-CRUD endpoints. Method defaults to GET (no body) or POST (with body):
 
 ```ts
 class PaymentService extends Service<Payment> {
@@ -297,16 +297,25 @@ class PaymentService extends Service<Payment> {
 
   async charge(amount: number) {
     return this.request<{ transactionId: string }>('/charge', {
-      body: { amount },
+      body: { amount },  // has body → POST
       local: () => ({ transactionId: `fake-${Date.now()}` }),
     });
+  }
+
+  async stats() {
+    return this.request<{ revenue: number }>('/stats');  // no body → GET
   }
 }
 
 await fb.payment.charge(50000);
 // Local  → runs the callback
 // HTTP   → POST /payments/charge
+
+await fb.payment.stats();
+// HTTP   → GET /payments/stats
 ```
+
+All presets auto-unwrap `{ success, data: { ... } }` response wrappers — works with both flat and wrapped responses.
 
 ### HTTP Driver + Backend Presets
 
