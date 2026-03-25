@@ -8,6 +8,7 @@ export { useGet } from './use-get';
 export { useMutation } from './use-mutation';
 export { useEvent } from './use-event';
 export { useAuth } from './use-auth';
+export { useSyncStatus } from './use-sync-status';
 
 // Types
 export type {
@@ -19,3 +20,4 @@ export type {
   UseGetOptions,
   FauxbaseContextValue,
 } from './types';
+export type { UseSyncStatusResult } from './use-sync-status';

@@ -12,6 +12,7 @@ export type {
   DriverConfig,
   LocalDriverConfig,
   HttpDriverConfig,
+  SyncDriverConfig,
   SeedDefinition,
   HookType,
 } from './types';
@@ -50,6 +51,8 @@ export type { Driver } from './drivers/types';
 // Drivers
 export { LocalDriver } from './drivers/local';
 export { HttpDriver } from './drivers/http';
+export { SyncDriver } from './drivers/sync/index';
+export type { SyncState, QueueEntry } from './drivers/sync/index';
 
 // Events
 export { EventBus } from './events/index';

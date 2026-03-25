@@ -87,7 +87,21 @@ export interface HttpDriverConfig {
   headers?: Record<string, string>;
 }
 
-export type DriverConfig = LocalDriverConfig | HttpDriverConfig;
+export interface SyncDriverConfig {
+  type: 'sync';
+  local: { persist?: 'localStorage' | 'indexeddb'; dbName?: string };
+  remote: { baseUrl: string; preset?: string; timeout?: number; retry?: { maxRetries?: number; baseDelay?: number }; headers?: Record<string, string> };
+  sync?: {
+    interval?: number;
+    retryDelay?: number;
+    maxRetries?: number;
+    conflictStrategy?: 'last-write-wins' | 'server-wins' | 'client-wins';
+    resources?: string[];
+    pingUrl?: string;
+  };
+}
+
+export type DriverConfig = LocalDriverConfig | HttpDriverConfig | SyncDriverConfig;
 
 // --- Seed ---
 

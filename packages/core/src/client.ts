@@ -4,6 +4,7 @@ import type { AuthState } from './auth';
 import type { EventsConfig, EventSourceAdapter } from './events/types';
 import { LocalDriver } from './drivers/local';
 import { HttpDriver } from './drivers/http';
+import { SyncDriver } from './drivers/sync/sync-driver';
 import { Service } from './service';
 import { AuthService } from './auth';
 import { EventBus } from './events/event-bus';
@@ -64,6 +65,11 @@ export function createClient<
     }
 
     if (driver instanceof HttpDriver) {
+      driver.registerEndpoint(name, instance.endpoint);
+    }
+
+    if (driver instanceof SyncDriver) {
+      driver.registerEntity(name, instance.entity);
       driver.registerEndpoint(name, instance.endpoint);
     }
 
@@ -132,6 +138,52 @@ export function createClient<
       });
 
       // Auto-refresh on 401: try to refresh token, return true if successful
+      defaultDriver.setOnUnauthorized(async () => {
+        try {
+          await authInstance.refresh();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    } else if (defaultDriver instanceof SyncDriver) {
+      // SyncDriver: auth via HTTP (login hits remote), data stored locally
+      // Use the internal HttpDriver for auth calls
+      authInstance._init(defaultDriver, resourceName);
+      defaultDriver.registerEntity(resourceName, authInstance.entity);
+      defaultDriver.registerEndpoint(resourceName, authInstance.endpoint);
+
+      // Persist auth to localStorage
+      const hasLocalStorage = typeof localStorage !== 'undefined';
+      const LS_AUTH_KEY = 'fauxbase:auth';
+      let memoryAuthState: AuthState | null = null;
+
+      authInstance._initAuth(
+        () => {
+          if (hasLocalStorage) {
+            const raw = localStorage.getItem(LS_AUTH_KEY);
+            return raw ? JSON.parse(raw) as AuthState : null;
+          }
+          return memoryAuthState;
+        },
+        (state: AuthState | null) => {
+          if (hasLocalStorage) {
+            if (state) {
+              localStorage.setItem(LS_AUTH_KEY, JSON.stringify(state));
+            } else {
+              localStorage.removeItem(LS_AUTH_KEY);
+            }
+          }
+          memoryAuthState = state;
+        },
+      );
+      authInstance._setHttpMode(defaultDriver._httpDriver);
+
+      defaultDriver.setAuthProvider(() => {
+        const token = authInstance.token;
+        return token ? { token } : null;
+      });
+
       defaultDriver.setOnUnauthorized(async () => {
         try {
           await authInstance.refresh();
@@ -214,29 +266,43 @@ export function createClient<
       });
     }
 
+    // Wire EventBus to SyncEngine if using SyncDriver
+    if (defaultDriver instanceof SyncDriver) {
+      defaultDriver.syncEngine.setEventBus(eventBus);
+    }
+
     client.disconnect = () => {
       eventSource?.disconnect();
+      if (defaultDriver instanceof SyncDriver) {
+        defaultDriver.syncEngine.stop();
+      }
       eventBus.destroy();
     };
   }
 
-  // Apply seeds (only for local driver)
+  // Apply seeds and resolve ready promise
   let readyPromise: Promise<void>;
   if (defaultDriver instanceof LocalDriver) {
     if (defaultDriver.isReady) {
-      // Synchronous backend (memory, localStorage) — apply seeds now
       if (config.seeds) {
         applySeedsIfNeeded(defaultDriver, config.seeds);
       }
       readyPromise = Promise.resolve();
     } else {
-      // Async backend (IndexedDB) — defer seeds until ready
       readyPromise = defaultDriver.ready.then(() => {
         if (config.seeds) {
           applySeedsIfNeeded(defaultDriver, config.seeds);
         }
       });
     }
+  } else if (defaultDriver instanceof SyncDriver) {
+    readyPromise = defaultDriver.ready.then(() => {
+      if (config.seeds) {
+        applySeedsIfNeeded(defaultDriver as any, config.seeds);
+      }
+      // Start sync engine after ready
+      defaultDriver.syncEngine.start();
+    });
   } else {
     readyPromise = Promise.resolve();
   }
@@ -256,6 +322,8 @@ function createDriver(config: DriverConfig): Driver {
       return new LocalDriver(config);
     case 'http':
       return new HttpDriver(config);
+    case 'sync':
+      return new SyncDriver(config);
     default:
       throw new Error(`Unknown driver type: ${(config as any).type}`);
   }
